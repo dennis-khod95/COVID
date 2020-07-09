@@ -1,0 +1,474 @@
+---
+title: "COVID, Obesity, and Food Security"
+author: "Dennis Khodasevich"
+output:
+  html_document:
+        toc: true
+        toc_depth: 1
+        code_folding: hide
+---
+
+Guide: 
+Generated some maps about COVID, obesity, and food security in NYC. Then I added a narrative about how there are clear disparities in death rates, obesity is a common comorbidity, disparities in obesity rates are linked to some deeply entrenched factors, inequities in food systems are a large contributor to some racial-ethnic/SES-based health disparities, and COVID is likely to reinforce many factors that promote obesity. 
+
+Each section has multiple tabs. Most graphs show more information when you hover over sections. Click code buttons on right to see code. 
+
+
+```{r, include = FALSE, message=FALSE, warning=FALSE, hide=TRUE}
+library(ggmap)
+library(rgdal)
+library(sf)
+library(scales)
+library(broom)
+library(RColorBrewer)
+library(readxl)
+library(tidyverse)
+library(RCurl)
+library(plotly)
+library(ggiraph)
+library(lubridate)
+
+#google API
+
+nyc_map <- get_map(location = c(lon = -74.00, lat = 40.71), maptype = "terrain", zoom = 10)
+
+y<-getURL("https://raw.githubusercontent.com/nychealth/coronavirus-data/master/data-by-modzcta.csv")
+deaths <- read.csv(text = y)
+deaths$id<-deaths$MODIFIED_ZCTA
+
+nyc <- readOGR("ZIP_CODE_040114.shp", stringsAsFactors = F)
+
+proj4string(nyc)
+NLL <- spTransform(nyc, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+nyc_LL<-tidy(NLL, region="ZIPCODE")
+NYL<-merge(nyc_LL, deaths, by="id", all=TRUE)
+NL <- NYL[order(NYL$order),]
+
+dat <- read_excel("2018-chp-pud.xlsx", sheet = "CHP_all_data", skip = 1, col_names = TRUE)
+dat<-head(dat,-4)
+neighborhood <- dat[c(7:65),]
+
+ny <- readOGR("geo_export_267a3f97-6621-4dec-8860-120dba406e04.shp", stringsAsFactors = F)
+ny_dat<-tidy(ny, region="boro_cd")
+neighborhood$id <- neighborhood$ID
+ny<-merge(ny_dat, neighborhood, by="id", all=TRUE)
+ny <- ny[order(ny$order),]
+
+```
+
+# COVID-19 in New York City {.tabset .tabset-pills .tabset-fade}
+New York City has suffered from some of the highest COVID-19 infection and death rates in the world. A number of factors help explain the exceedingly high infection rate in NYC, including high population density, high public transport usage, and unclear messaging from leadership. Clear disparities exist in which areas of NYC suffered the highest COVID-19 death rates. Although death rates in NYC have been decreasing for weeks, the high likelihood of resurgence highlights the need to examine the factors contributing to especially high death rates in some communities. 
+
+## Total Cases
+```{r, message=FALSE, warning=FALSE, out.width = '60%'}
+NL$t <- paste0(
+  "<b>", NL$NEIGHBORHOOD_NAME, ": ", "<br>",
+  prettyNum(NL$COVID_DEATH_RATE, big.mark = " "), "  Deaths per 100k Citizens", "<br>",
+  "Number of Cases: ", NL$COVID_CASE_COUNT)
+
+case<-ggmap(nyc_map) + 
+  geom_polygon_interactive(data = NL, aes(x=long, y=lat, group=group, fill=COVID_CASE_COUNT,
+                               tooltip = t), alpha=0.7) + 
+  ggtitle("Number of COVID-19 cases by zip code") + 
+  theme_void() + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_fill_gradient2(low="navy", mid="white", high="red", na.value="transparent", 
+                       limits=range(NL$COVID_CASE_COUNT), 
+                       name = "") + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92))
+
+girafe(code={print(case)})
+
+```
+
+
+## Total Deaths
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+NL$ttip <- paste0(
+  "<b>", NL$NEIGHBORHOOD_NAME, ": ", "<br>",
+  prettyNum(NL$COVID_DEATH_RATE, big.mark = " "), "  Deaths per 100k Citizens", "<br>",
+  "Number of Cases: ", NL$COVID_CASE_COUNT)
+
+rate<-ggmap(nyc_map) + 
+  geom_polygon_interactive(data = NL, aes(x=long, y=lat, group=group, fill=COVID_DEATH_RATE,
+                               tooltip = ttip), alpha=0.7) + 
+  theme_void() + 
+  ggtitle("Number of deaths from COVID-19") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_fill_gradient2(low="navy", mid="white", high="red", na.value="transparent", 
+                       limits=range(NL$COVID_DEATH_RATE), 
+                       name = "") + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92))
+
+girafe(code={print(rate)})
+
+```
+
+
+## Death Timeline
+```{r, message=FALSE, warning=FALSE, fig.width = 6, fig.height=4}
+z<-getURL("https://raw.githubusercontent.com/nychealth/coronavirus-data/master/deaths/probable-confirmed-dod.csv")
+dates <- read.csv(text = z)
+dates$total <- dates$CONFIRMED_COUNT+dates$PROBABLE_COUNT
+dates$DATE_OF_DEATH <- mdy(dates$DATE_OF_DEATH)
+
+dates$month <- month(dates$DATE_OF_DEATH, label = TRUE, abbr = FALSE)
+dates$day <- day(dates$DATE_OF_DEATH)
+dates$dates <- paste(dates$month, dates$day, sep = " ")
+
+
+date <- plot_ly(dates, x = ~DATE_OF_DEATH, y = ~total, type = 'scatter', mode = 'lines', 
+                name="Likely Total Deaths", width=4, hoverinfo = 'text',
+                text = ~paste(dates, "<br>", 
+                  total, " Likely Total Deaths", "<br>", 
+                              CONFIRMED_COUNT, " Confirmed Deaths", "<br>",
+                              PROBABLE_COUNT, " Probable Deaths")) %>% 
+  layout(yaxis = list(showline = F, 
+                      title = "Likely Total Deaths from COVID-19"),
+         xaxis = list(showline = F, 
+                      zeroline = FALSE, 
+                      title = "", 
+                      ticktext = list("3/11", "3/22", "4/2", "4/13", 
+                                      "4/24", "5/5", "5/16", "5/27",
+                                      "6/7", "6/18"),
+    tickvals = list("2020-03-11", "2020-03-22", "2020-04-02", "2020-04-13", 
+                    "2020-04-24", "2020-05-05", "2020-05-16", "2020-05-27",
+                    "2020-06-07", "2020-06-18"))) %>% 
+  add_segments(x = "2020-03-22", xend = "2020-03-22", y = 0, yend = 805, width=1, 
+               color=I("pink"), showlegend = FALSE) %>% 
+  layout(title = "Daily Number of COVID-19 Deaths") %>% 
+  layout(annotations = list(x = "2020-03-22", y = 805, text = "Start of NYC Shelter in Place", 
+      showarrow = T, arrowcolor="pink", font=list(size=12, color="pink")))
+date
+
+```
+
+
+***
+
+# Obesity and Food Security {.tabset .tabset-pills .tabset-fade}
+  Several pre-existing conditions have been identified that significantly increase the risk of death from COVID-19 infection. Obesity is one of the most common comorbities with COVID-19 deaths. Obesity is both largely preventable and strongly promoted by various components of our built environment. Notable disparities in adult obesity rates exist across New York City. There are a large number of factors that contribute to the huge disparity in obesity rates across the city, ranging from immediate factors like low access to healthy foods to deeply entrenched factors like poverty. Many of these factors compound in certain areas, leading to especially high obesity rates among residents. 
+
+## Adult Obesity
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+ny$ttip <- paste0(
+  "<b>", ny$Name, ": ", "<br>",
+  " Adult Obesity Rate: ", prettyNum(ny$Obesity, big.mark = " "), "%")
+
+obesity<-ggmap(nyc_map) + 
+  geom_polygon_interactive(data = ny, aes(x=long, y=lat, group=group, 
+                                          fill=Obesity, tooltip = ttip), alpha=0.7) + 
+  theme_void() + 
+  ggtitle("Percent of adults classified as obese") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_fill_gradient2(low="navy", mid="white", high="red", na.value="transparent", 
+                       limits=range(ny$Obesity),
+                       name = "") + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92))
+
+girafe(code={print(obesity)})
+
+```
+
+
+## Poverty
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+lump <- read_xlsx("predictors.xlsx")
+lump$id <- lump$GEO_ID
+n <- merge(ny_dat, lump, by="id", all=TRUE)
+n <- n[order(n$order),]
+
+n$tip <- paste0(
+  "<b>", n$GEO_DISPLAY_NAME, ": ", "<br>",
+  "Percent of Adults Below Poverty Line: ", 
+  prettyNum(n$Percent_working_adults_below_poverty_line, big.mark = " "), "%")
+
+pov<-ggmap(nyc_map) + 
+  geom_polygon_interactive(data = n, aes(x=long, y=lat, group=group, 
+                                        fill=Percent_working_adults_below_poverty_line, 
+                                         tooltip = tip), alpha=0.7) + 
+  theme_void() + 
+  ggtitle("Percent of working adults below the poverty line") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_fill_gradient2(low="navy", mid="white", high="red", na.value="transparent", 
+                       limits=range(n$Percent_working_adults_below_poverty_line),
+                       name = "") + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92))
+
+girafe(code={print(pov)})
+
+```
+
+
+## SNAP Utilization
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+n$ttip <- paste0(
+  "<b>", n$GEO_DISPLAY_NAME, ": ", "<br>",
+  "Percent of Households on SNAP: ", prettyNum(n$Percent_households_SNAP, big.mark = " "), "%")
+
+SNAP<-ggmap(nyc_map) + 
+  geom_polygon_interactive(data = n, aes(x=long, y=lat, group=group, 
+                                          fill=Percent_households_SNAP, tooltip = ttip), alpha=0.7) + 
+  theme_void() + 
+  ggtitle("Percent of households using SNAP") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_fill_gradient2(low="navy", mid="white", high="red", na.value="transparent", 
+                       limits=range(n$Percent_households_SNAP),
+                       name = "") + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92))
+
+girafe(code={print(SNAP)})
+
+```
+
+
+## Fruit/Vegetable Intake
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+n$ttp <- paste0(
+  "<b>", n$GEO_DISPLAY_NAME, ": ", "<br>",
+  "Percent with no Fruit/Vegetable Intake: ", 
+  prettyNum(n$Percent_adults_no_fruits_vegetables, big.mark = " "), "%")
+
+veg<-ggmap(nyc_map) + 
+  geom_polygon_interactive(data = n, aes(x=long, y=lat, group=group, 
+                                        fill=Percent_adults_no_fruits_vegetables, 
+                                         tooltip = ttp), alpha=0.7) + 
+  theme_void() + 
+  ggtitle("Percent of adults with no fruit or vegetable intake in the past day") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_fill_gradient2(low="navy", mid="white", high="red", na.value="transparent", 
+                      limits=range(n$Percent_adults_no_fruits_vegetables),
+                      name = "") + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92))
+
+girafe(code={print(veg)})
+```
+
+***
+
+```{r, include = FALSE, message=FALSE, warning=FALSE, hide=TRUE}
+nyc <- readOGR("deathclusters.shp", stringsAsFactors = F)
+proj4string(nyc)
+NLL <- spTransform(nyc, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+nyc_LL<-tidy(NLL, region="ZIPCODE")
+
+dat <- nyc@data
+
+dat <- dat %>% 
+  select(DeathRate, LISA_CL, ZIPCODE)
+dat$id <- dat$ZIPCODE
+
+NYL<-merge(nyc_LL, dat, by="id", all=TRUE)
+NL <- NYL[order(NYL$order),]
+
+NL <- NL %>% 
+  mutate(deathcluster = ifelse(LISA_CL==1, 1, 
+                               ifelse(LISA_CL==2, -1, 0)))
+
+com <- readOGR("obesitypovertyclusters.shp", stringsAsFactors = F)
+proj4string(com)
+comm <- spTransform(com, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+nyc_com<-tidy(comm, region="boro_cd")
+
+ob <- comm@data
+
+ob <- ob %>% 
+  select(PovertyCL, ObesityCL, boro_cd)
+ob$id <- ob$boro_cd
+
+obesity<-merge(nyc_com, ob, by="id", all=TRUE)
+obesity <- obesity[order(obesity$order),]
+
+obesity <- obesity %>% 
+  mutate(obesecluster = ifelse(ObesityCL==1, 1, 
+                               ifelse(ObesityCL==2, -1, 0)))
+obesity <- obesity %>% 
+  mutate(povertycluster = ifelse(PovertyCL==1, 1, 
+                               ifelse(PovertyCL==2, -1, 0)))
+
+```
+
+
+# Geographical Clustering of COVID-19 Deaths, Obesity, and Poverty {.tabset .tabset-pills .tabset-fade}
+  These maps show areas with significant clustering of both high and low rates of COVID-19 Deaths, Obesity, and Poverty. A large low death rate prevalence cluster spans Midtown and Southern Manhattan, while high death rate clusters are scattered throughout the Bronx, Queens, and Brooklyn. Although clusters of both poverty and obesity rates overlap with COVID-19 death rate clusters, obesity rates overlap more strongly. 
+
+
+## COVID Death Clusters
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+
+# death clusters
+deathclusters<-ggmap(nyc_map) + 
+  geom_polygon_interactive(data = NL, aes(x=long, y=lat, group=group, 
+                                          fill=deathcluster), alpha=0.7) + 
+  ggtitle("Significant Clusters of COVID Death Rates") + 
+  theme_void() + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_fill_gradient2(low="navy", mid="white", high="red", na.value="transparent", 
+                       limits=range(NL$deathcluster), 
+                       name = "",
+                       breaks=c(-1,1),labels=c("Low","High")) + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92))
+
+girafe(code={print(deathclusters)})
+
+```
+
+
+## Obesity Rate Clusters
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+
+obesityclusters<-ggmap(nyc_map) + 
+  geom_polygon_interactive(data = obesity, aes(x=long, y=lat, group=group, 
+                                          fill=obesecluster), alpha=0.7) + 
+  ggtitle("Significant Clusters of Obesity Rates") + 
+  theme_void() + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_fill_gradient2(low="navy", mid="white", high="red", na.value="transparent", 
+                       limits=range(obesity$obesecluster), 
+                       name = "",
+                       breaks=c(-1,1),labels=c("Low","High")) + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92))
+
+girafe(code={print(obesityclusters)})
+
+```
+
+
+
+## Poverty Rate Clusters
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+povertyclusters<-ggmap(nyc_map) + 
+  geom_polygon_interactive(data = obesity, aes(x=long, y=lat, group=group, 
+                                               fill=povertycluster), alpha=0.7) + 
+  ggtitle("Significant Clusters of Poverty Rates") + 
+  theme_void() + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_fill_gradient2(low="navy", mid="white", high="red", na.value="transparent", 
+                       limits=range(obesity$povertycluster), 
+                       name = "", 
+                       breaks=c(-1,1),labels=c("Low","High")) + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92))
+
+girafe(code={print(povertyclusters)})
+
+```
+
+
+***
+
+
+
+# Obesity and Food Security in the Time of COVID {.tabset .tabset-pills .tabset-fade}
+
+  COVID-19 not only led to worse health outcomes in obese invidividuals, but also reinforced various factors that promote development of obesity. Initial fear over COVID-19 led some people to stock up on food and other essential items, leaving many supermarkets barren. Many residents found themselves unable to purchase essential food items due to lack of availability or even simply due to fear of catching the virus from trips to nearby stores. To add to this issue, popular grocery delivery services in the city could not keep up with the volume of new orders, leaving customers either unable to place orders or having to wait weeks for delivery. 
+
+  Despite success in efforts to reduce food insecurity across the United States in recent years, all 5 boroughs of New York City are expected to experience a large increase in the number of food insecure individuals, and food insecurity is closely tied to obesity. Although COVID-19 put additional stress on the city's food system, these problems have been in place long before the emergence of COVID-19. Inequality in food access and quality are major drivers of the massive inequality in health outcomes seen across the city. 
+
+  Improving distribution of farmers markets can bring fresh fruits and vegetables to food deserts. Most are currently open and provide an opportunity to buy food in an outdoor environment, where risk of disease transmission is significantly lower. Similarly, community gardens can allow communities to work together to become less dependent on external food sources by producing some of their own food. 
+
+## Food Security
+```{r, message=FALSE, warning=FALSE, fig.width = 5, fig.height=6}
+change <- read_excel("Zoom_State_Full_Data_data.xlsx")
+
+change <- change %>% 
+  rename(Insecure_before = `2018NumberofFoodInsecurePersons`,
+         Insecure_after = `2020NumberofFoodInsecurePersons`)
+
+xform <- list(categoryorder = "array",
+              categoryarray = c("Kings", 
+                                "Bronx", 
+                                "Queens",
+                                "New York",
+                                "Richmond"))
+
+change <- change %>% 
+  mutate(county = ifelse(County=="Kings", "Brooklyn", 
+                         ifelse(County=="New York", "Manhattan", 
+                                ifelse(County=="Richmond", "Staten Island", as.character(County)))))
+
+change$county <- factor(change$county, levels = c("Staten Island",
+                                                  "Manhattan", 
+                                                  "Bronx", 
+                                                  "Queens", 
+                                                  "Brooklyn"))
+
+fig <- plot_ly(change, x = ~county, y = ~Insecure_before, type = 'bar', 
+               name = '2018') %>% 
+  add_trace(y = ~Insecure_after, name = '2020') %>% 
+  layout(yaxis = list(title = 'Number'), barmode = 'group') %>% 
+  layout(title = "Number of Adults Suffering from Food Insecurity",
+         xaxis = list(title = ""),
+         yaxis = list(title = ""))
+
+fig
+
+```
+
+## Farmers Markets
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+food <- read.csv("Farmers__Markets_in_New_York_State_Map.csv")
+food <- food %>% 
+  filter(County == "Kings" | County == "Bronx" | 
+           County == "New York" | County == "Richmond" | County == "Queens")
+
+food$model <- paste0(
+  "<b>", food$Market.Name, ": ", "<br>",
+  food$Location, "<br>", 
+  "Open Dates: ", food$Operation.Season, "<br>",
+  "Hours: ", food$Operation.Hours)
+                        
+                        
+farm<-ggmap(nyc_map) + 
+  geom_polygon(data = ny, aes(x=long, y=lat, group=group), alpha=0.01) + 
+  theme_void() + 
+  ggtitle("Farmers market locations") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92)) + 
+  geom_point_interactive(data=food, aes(x=Longitude, y=Latitude, tooltip = model), 
+                         size=0.5, color="darkgreen")
+
+girafe(code={print(farm)})
+
+```
+
+
+## Community Gardens
+```{r, message=FALSE, warning=FALSE, fig.width = 4, fig.height=6}
+gardens <- read.csv("NYC_Greenthumb_Community_Gardens.csv")
+
+gardens$model <- paste0(
+  "<b>", gardens$Address, "<b>")
+                      
+gard<-ggmap(nyc_map) + 
+  geom_polygon(data = ny, aes(x=long, y=lat, group=group), alpha=0.01) + 
+  theme_void() + 
+  ggtitle("Community garden locations") + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  coord_map(xlim=c(-74.3, -73.65), ylim=c(40.48, 40.92)) + 
+  geom_point_interactive(data=gardens, aes(x=Longitude, y=Latitude, tooltip = model), 
+                         size=0.5, color="darkgreen")
+
+girafe(code={print(gard)})
+
+```
+
+***
+
+# Conclusions
+  Hypertension, obesity, and diabetes are the most common comorbities among COVID-19 patients. Even prior to COVID-19, these 3 conditions were some of the leading causes of preventable deaths in the US. These conditions are all tightly linked to problems in the local food system. Inequities in the NYC food system are deeply rooted in a history of institutional racism. These inequities range from simple factors like market distribution and health education in schools, to complex issues like stress and lack of time for cooking and shopping. These food system inequities are a major way that health disparities between wealthy white communities and lower SES communities/communities of color are propagated. Changes to the food system in NYC will not be easy, but they are worthwhile. These changes must include a wide range of interventions including, but not limited to, bringing more markets into food deserts, raising SNAP benefits, and health education curriculum in public schools. 
+
+
+
+***
+
+# Data Sources
+
+https://github.com/nychealth/coronavirus-data
+
+https://www1.nyc.gov/site/doh/data/data-sets/community-health-survey-public-use-data.page
+
+https://www.feedingamerica.org/research/coronavirus-hunger-research
+
+
+
+
